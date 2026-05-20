@@ -29,10 +29,9 @@
 ## 快速开始
 
 ### 依赖安装
-```bash
 sudo apt-get install libmysqlclient-dev libevent-dev libjsoncpp-dev libssl-dev
 
-```bash
+
 
 #编译
 ## 编译服务端
