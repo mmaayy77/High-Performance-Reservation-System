@@ -31,9 +31,6 @@
 ### 依赖安装
 sudo apt-get install libmysqlclient-dev libevent-dev libjsoncpp-dev libssl-dev
 
-
-
-#编译
 ## 编译服务端
 g++ ser.cpp -o server -lmysqlclient -levent -ljsoncpp -lpthread -lcrypto
 
