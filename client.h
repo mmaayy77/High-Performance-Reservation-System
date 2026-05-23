@@ -13,6 +13,24 @@ const int OFFSET = 2;
 
 enum OP_TYPE {DL = 1, ZC,CKYY,YD,CKYD,QXYD,TC};
 
+inline bool send_all(int sockfd, const string& data)
+{
+    const char* buf = data.c_str();
+    int total = (int)data.size();
+    int sent  = 0;
+    while (sent < total)
+    {
+        int n = send(sockfd, buf + sent, total - sent, 0);
+        if (n <= 0)
+        {
+            cout << "send error" << endl;
+            return false;
+        }
+        sent += n;
+    }
+    return true;
+}
+
 //ctrl shift  i
 class socket_client
 {

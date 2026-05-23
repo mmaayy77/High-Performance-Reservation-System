@@ -14,7 +14,7 @@ bool socket_client::Connect_server()
     saddr.sin_family = AF_INET;
     saddr.sin_port = htons(port);
     saddr.sin_addr.s_addr = inet_addr(ips.c_str());
-    int res = connect(sockfd, (struct sockaddr *)&saddr, sizeof(saddr));
+    int res = connect(sockfd, (struct sockaddr*)&saddr, sizeof(saddr));
     if (res == -1)
     {
         cout << "connect ser err" << endl;
@@ -80,9 +80,11 @@ void socket_client::User_Register()
     val["user_name"] = username;
     val["user_passwd"] = passwd;
 
-    send(sockfd, val.toStyledString().c_str(), strlen(val.toStyledString().c_str()), 0);
+    // 先存到变量，再用send_all循环发送
+    string json_str = val.toStyledString();
+    if (!send_all(sockfd, json_str)) return;
 
-    char buff[256] = {0};
+    char buff[256] = { 0 };
     if (recv(sockfd, buff, 255, 0) <= 0)
     {
         cout << "ser close" << endl;
@@ -128,9 +130,11 @@ void socket_client::User_Login()
     val["user_tel"] = tel;
     val["user_passwd"] = passwd;
 
-    send(sockfd, val.toStyledString().c_str(), strlen(val.toStyledString().c_str()), 0);
+    //先存到变量，再用send_all循环发送
+    string json_str = val.toStyledString();
+    if (!send_all(sockfd, json_str)) return;
 
-    char buff[256] = {0};
+    char buff[256] = { 0 };
     int n = recv(sockfd, buff, 255, 0);
     if (n <= 0)
     {
@@ -165,9 +169,11 @@ void socket_client::User_Show_Ticket()
 {
     Json::Value val;
     val["type"] = CKYY;
-    send(sockfd, val.toStyledString().c_str(), strlen(val.toStyledString().c_str()), 0);
+    //先存到变量，再用send_all循环发送
+    string json_str = val.toStyledString();
+    if (!send_all(sockfd, json_str)) return;
     //
-    char buff[4096] = {0};
+    char buff[4096] = { 0 };
     int n = recv(sockfd, buff, 4095, 0);
     // cout<<buff<<endl;
     if (n <= 0)
@@ -225,9 +231,11 @@ void socket_client::User_Subscribe_Ticket()
     val["tel"] = usertel;
     val["index"] = index;
 
-    send(sockfd, val.toStyledString().c_str(), strlen(val.toStyledString().c_str()), 0);
+    // 【修复】先存到变量，再用send_all循环发送
+    string json_str = val.toStyledString();
+    if (!send_all(sockfd, json_str)) return;
 
-    char buff[256] = {0};
+    char buff[256] = { 0 };
     int n = recv(sockfd, buff, 255, 0);
     if (n <= 0)
     {
@@ -271,7 +279,7 @@ void socket_client::User_Show_Sub_Ticket()
 
     // 3. 接收服务端返回的列表
     // 预约列表可能比较长，所以我们准备一个大一点的缓冲区
-    char buff[4096] = {0};
+    char buff[4096] = { 0 };
     int n = recv(sockfd, buff, 4095, 0);
     if (n <= 0) {
         cout << "服务器未响应..." << endl;
@@ -304,10 +312,10 @@ void socket_client::User_Show_Sub_Ticket()
 
     for (int i = 0; i < num; i++) {
         // 注意：这里的字段名要和服务器给的 resval["arr"] 里的 key 一致
-        printf("%-10s | %-20s | %-20s\n", 
-               res["arr"][i]["sub_id"].asString().c_str(),
-               res["arr"][i]["addr"].asString().c_str(),
-               res["arr"][i]["time"].asString().c_str());
+        printf("%-10s | %-20s | %-20s\n",
+            res["arr"][i]["sub_id"].asString().c_str(),
+            res["arr"][i]["addr"].asString().c_str(),
+            res["arr"][i]["time"].asString().c_str());
     }
     cout << "==============================================" << endl;
 }
@@ -327,10 +335,12 @@ void socket_client::User_Cancel_Sub_Ticket()
     val["type"] = QXYD; // 对应枚举中的取消预约
     val["sub_id"] = sub_id;
 
-    send(sockfd, val.toStyledString().c_str(), strlen(val.toStyledString().c_str()), 0);
+    // 【修复】先存到变量，再用send_all循环发送
+    string json_str = val.toStyledString();
+    if (!send_all(sockfd, json_str)) return;
 
     // 3. 接收结果
-    char buff[256] = {0};
+    char buff[256] = { 0 };
     if (recv(sockfd, buff, 255, 0) <= 0) return;
 
     Json::Value res;
@@ -339,7 +349,8 @@ void socket_client::User_Cancel_Sub_Ticket()
 
     if (res["status"].asString() == "OK") {
         cout << "取消成功！名额已退还。" << endl;
-    } else {
+    }
+    else {
         cout << "取消失败，请检查 ID 是否正确。" << endl;
     }
 }
