@@ -1,103 +1,182 @@
-// 多线程压力测试工具，用于验证系统在高并发下的稳定性
+/**
+ *
+ * 编译：g++ stress_test.cpp -o stress_test -lpthread
+ * 运行：./stress_test [并发数] [每线程请求数]
+ * 示例：./stress_test 50 100   → 50并发，每人发100次查询
+ *
+ * 测试前确保服务器已启动：./server
+ */
 
 #include <iostream>
 #include <string>
 #include <vector>
 #include <thread>
-#include <chrono>
 #include <atomic>
+#include <chrono>
+#include <numeric>
+#include <algorithm>
+#include <mutex>
+#include <cstring>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <unistd.h>
-#include <string.h>
-#include <jsoncpp/json/json.h>
 
 using namespace std;
+using namespace chrono;
 
-// 全局计数器（线程安全）
-atomic<int> total_success(0);
-atomic<int> total_failed(0);
+// ========== 配置区 ==========
+const char*  SERVER_IP      = "127.0.0.1";
+const short  SERVER_PORT    = 6000;
+const string TEST_TEL       = "11111111111"; // 改成数据库里真实存在的手机号
+const string TEST_PASSWD    = "111111";     // 对应密码
+// ============================
 
-// 压测参数配置
-const string SERVER_IP = "127.0.0.1";
-const int SERVER_PORT = 6000;
-const int CONCURRENCY = 20;    // 并发线程数（模拟20个用户同时在线）
-const int REQUESTS_PER_THREAD = 500; // 每个用户发送多少次请求
+atomic<int>      success_count(0);
+atomic<int>      fail_count(0);
+mutex            latency_mutex;
+vector<long long> all_latencies; // 收集每次请求延迟，用于算分位数
 
-void worker() {
-    int local_success = 0;
-    int local_failed = 0;
-
-    for (int i = 0; i < REQUESTS_PER_THREAD; ++i) {
-        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sockfd < 0) { local_failed++; continue; }
-
-        struct sockaddr_in saddr;
-        memset(&saddr, 0, sizeof(saddr));
-        saddr.sin_family = AF_INET;
-        saddr.sin_port = htons(SERVER_PORT);
-        saddr.sin_addr.s_addr = inet_addr(SERVER_IP.c_str());
-
-        if (connect(sockfd, (struct sockaddr *)&saddr, sizeof(saddr)) < 0) {
-            local_failed++;
-            close(sockfd);
-            continue;
-        }
-
-        // 构造“纯查询”请求 JSON
-        Json::Value val;
-        val["type"] = 3; // CKYY 对应枚举值 3
-
-        string send_data = val.toStyledString();
-        send(sockfd, send_data.c_str(), send_data.size(), 0);
-
-        // 接收响应（压测时不打印，只接收以清空缓冲区）
-        char buff[4096];
-        int n = recv(sockfd, buff, sizeof(buff), 0);
-        if (n > 0) {
-            local_success++;
-        } else {
-            local_failed++;
-        }
-
-        close(sockfd); // 模拟短连接频繁请求
+// 循环发送，保证发完
+bool send_all(int sockfd, const string& data) {
+    int sent = 0, total = data.size();
+    while (sent < total) {
+        int n = send(sockfd, data.c_str() + sent, total - sent, 0);
+        if (n <= 0) return false;
+        sent += n;
     }
-
-    total_success += local_success;
-    total_failed += local_failed;
+    return true;
 }
 
-int main() {
-    cout << "--- 压力测试开始 ---" << endl;
-    cout << "并发数: " << CONCURRENCY << " | 每个线程请求数: " << REQUESTS_PER_THREAD << endl;
-    cout << "总请求预设: " << CONCURRENCY * REQUESTS_PER_THREAD << endl;
+// 发一次请求，返回是否成功，同时记录延迟
+bool do_request(int sockfd, const string& req, long long& out_ms) {
+    auto t0 = high_resolution_clock::now();
 
-    auto start_time = chrono::high_resolution_clock::now();
+    if (!send_all(sockfd, req)) return false;
 
-    // 启动线程池
+    char buf[4096] = {0};
+    int n = recv(sockfd, buf, 4095, 0);
+
+    auto t1 = high_resolution_clock::now();
+    out_ms = duration_cast<microseconds>(t1 - t0).count() / 1000.0;
+
+    if (n <= 0) return false;
+    return string(buf, n).find("\"OK\"") != string::npos;
+}
+
+void worker(int thread_id, int req_count) {
+    // ===== 第一步：建立一次 TCP 连接 =====
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == -1) { fail_count += req_count; return; }
+
+    struct sockaddr_in saddr;
+    memset(&saddr, 0, sizeof(saddr));
+    saddr.sin_family      = AF_INET;
+    saddr.sin_port        = htons(SERVER_PORT);
+    saddr.sin_addr.s_addr = inet_addr(SERVER_IP);
+
+    if (connect(sockfd, (struct sockaddr*)&saddr, sizeof(saddr)) == -1) {
+        close(sockfd); fail_count += req_count; return;
+    }
+
+    // ===== 第二步：登录一次 =====
+    string login_req =
+        "{\"type\":1,\"user_tel\":\"" + TEST_TEL +
+        "\",\"user_passwd\":\"" + TEST_PASSWD + "\"}";
+    long long dummy;
+    if (!do_request(sockfd, login_req, dummy)) {
+        close(sockfd); fail_count += req_count; return;
+    }
+
+    // ===== 第三步：在同一连接上反复发查询，测真实处理速度 =====
+    string query_req = "{\"type\":3}";
+    vector<long long> local_latencies;
+    local_latencies.reserve(req_count);
+
+    for (int i = 0; i < req_count; i++) {
+        long long ms = 0;
+        if (do_request(sockfd, query_req, ms)) {
+            success_count++;
+            local_latencies.push_back(ms);
+        } else {
+            fail_count++;
+        }
+    }
+
+    close(sockfd);
+
+    // 汇总到全局延迟数组
+    lock_guard<mutex> lock(latency_mutex);
+    all_latencies.insert(all_latencies.end(),
+                         local_latencies.begin(), local_latencies.end());
+}
+
+int main(int argc, char* argv[]) {
+    int concurrency    = 50;
+    int req_per_thread = 100;
+
+    if (argc >= 2) concurrency    = atoi(argv[1]);
+    if (argc >= 3) req_per_thread = atoi(argv[2]);
+
+    int total_requests = concurrency * req_per_thread;
+
+    cout << "======================================" << endl;
+    cout << "  预约系统压力测试 v2（长连接版）"       << endl;
+    cout << "  服务器:       " << SERVER_IP << ":" << SERVER_PORT << endl;
+    cout << "  并发连接数:   " << concurrency         << endl;
+    cout << "  每连接请求数: " << req_per_thread      << endl;
+    cout << "  总请求数:     " << total_requests      << endl;
+    cout << "======================================" << endl;
+    cout << "测试中，请稍候..." << endl;
+
+    auto global_start = high_resolution_clock::now();
+
     vector<thread> threads;
-    for (int i = 0; i < CONCURRENCY; ++i) {
-        threads.push_back(thread(worker));
+    threads.reserve(concurrency);
+    for (int i = 0; i < concurrency; i++)
+        threads.emplace_back(worker, i, req_per_thread);
+    for (auto& t : threads) t.join();
+
+    auto global_end = high_resolution_clock::now();
+    double total_sec = duration_cast<milliseconds>(global_end - global_start).count() / 1000.0;
+
+    int succ = success_count.load();
+    int fail = fail_count.load();
+
+    // 计算延迟统计
+    double avg_ms = 0, p99_ms = 0, min_ms = 0, max_ms = 0;
+    if (!all_latencies.empty()) {
+        sort(all_latencies.begin(), all_latencies.end());
+        long long sum = 0;
+        for (auto v : all_latencies) sum += v;
+        avg_ms = (double)sum / all_latencies.size();
+        min_ms = all_latencies.front();
+        max_ms = all_latencies.back();
+        int p99_idx = (int)(all_latencies.size() * 0.99);
+        p99_ms = all_latencies[p99_idx];
     }
 
-    // 等待所有线程结束
-    for (auto &t : threads) {
-        t.join();
-    }
+    double qps          = total_sec > 0 ? succ / total_sec : 0;
+    double success_rate = total_requests > 0 ? (double)succ / total_requests * 100.0 : 0;
 
-    auto end_time = chrono::high_resolution_clock::now();
-    chrono::duration<double> diff = end_time - start_time;
+    cout << endl;
+    cout << "============= 测试结果 =============" << endl;
+    printf("  总耗时:           %.2f 秒\n",    total_sec);
+    printf("  成功请求:          %d / %d\n",   succ, total_requests);
+    printf("  成功率:            %.1f%%\n",     success_rate);
+    printf("  平均响应时间:      %.1f ms\n",    avg_ms);
+    printf("  最小响应时间:      %.1f ms\n",    min_ms);
+    printf("  最大响应时间:      %.1f ms\n",    max_ms);
+    printf("  P99 响应时间:      %.1f ms\n",    p99_ms);
+    printf("  吞吐量 (QPS):      %.0f 请求/秒\n", qps);
+    cout << "=====================================" << endl;
 
-    // 计算结果
-    double seconds = diff.count();
-    double qps = total_success / seconds;
-
-    cout << "\n--- 测试结果 ---" << endl;
-    cout << "成功总数: " << total_success << endl;
-    cout << "失败总数: " << total_failed << endl;
-    cout << "总耗时: " << seconds << " 秒" << endl;
-    cout << "平均响应时间: " << (seconds / total_success) * 1000 << " 毫秒" << endl;
-    cout << "\033[32;1mQPS (每秒处理请求数): " << qps << "\033[0m" << endl;
+    cout << endl;
+    cout << "========= 简历可用数据 ==========" << endl;
+    printf("  并发 %d 连接，成功率 %.1f%%\n",  concurrency, success_rate);
+    printf("  平均响应 %.1f ms，P99 %.1f ms\n", avg_ms, p99_ms);
+    printf("  QPS %.0f\n",                      qps);
+    cout << "==================================" << endl;
 
     return 0;
 }

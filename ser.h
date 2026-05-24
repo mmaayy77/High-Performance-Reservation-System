@@ -42,11 +42,11 @@ public:
     }
 
     bool mysql_ConnectServer();
-    bool mysql_Register(const string &tel, const string &passwd, const string &name);
-    bool mysql_Login(const string &tel, const string &passwd, string &name);
-    bool mysql_Show_Ticket(Json::Value &resval);
+    bool mysql_Register(const string& tel, const string& passwd, const string& name);
+    bool mysql_Login(const string& tel, const string& passwd, string& name);
+    bool mysql_Show_Ticket(Json::Value& resval);
     bool mysql_Subscribe_Ticket(int tk_id, string tel);
-    bool mysql_user_view_reservation(const string &tel, Json::Value &resval);
+    bool mysql_user_view_reservation(const string& tel, Json::Value& resval);
     bool mysql_Cancel_Reservation(int sub_id); // 根据预约ID取消
 
 private:
@@ -79,7 +79,7 @@ public:
     bool socket_init();
     int accept_client();
 
-    void Set_base(struct event_base *base)
+    void Set_base(struct event_base* base)
     {
         this->base = base;
     }
@@ -89,7 +89,7 @@ public:
         return sockfd;
     }
 
-    struct event_base *Get_base() const
+    struct event_base* Get_base() const
     {
         return base;
     }
@@ -98,7 +98,7 @@ private:
     int sockfd;
     short m_port;
     string m_ips;
-    struct event_base *base;
+    struct event_base* base;
 };
 
 class socket_con
@@ -107,9 +107,10 @@ public:
     socket_con(int fd) : c(fd)
     {
         c_ev = NULL;
+        cli.mysql_ConnectServer(); // 【改进】构造时连接一次，全程复用
     }
 
-    void Set_ev(struct event *ev)
+    void Set_ev(struct event* ev)
     {
         c_ev = ev;
     }
@@ -134,8 +135,8 @@ public:
 
 private:
     int c;
-    struct event *c_ev;
+    struct event* c_ev;
 
     Json::Value val;
-    // mysql_client cli;
+    mysql_client cli; // 【改进】提升为成员变量，一个连接复用一个DB连接
 };

@@ -25,7 +25,7 @@ string sha256_hash(const string str) {
     SHA256_Update(&sha256, str.c_str(), str.size());
     SHA256_Final(hash, &sha256);
     stringstream ss;
-    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
         ss << hex << setw(2) << setfill('0') << (int)hash[i];
     }
     return ss.str();
@@ -34,7 +34,7 @@ string sha256_hash(const string str) {
 // mysqlclient
 bool mysql_client::mysql_ConnectServer()
 {
-    MYSQL *mysql = mysql_init(&mysql_con);
+    MYSQL* mysql = mysql_init(&mysql_con);
     if (mysql == NULL)
     {
         return false;
@@ -126,16 +126,16 @@ bool mysql_client::mysql_Login(const string& tel, const string& passwd, string& 
 
     // 3. 执行并绑定输出参数
     mysql_stmt_execute(stmt);
-    
+
     char db_name[50], db_pass[128], db_salt[32];
     unsigned long len[3];
     MYSQL_BIND bind_out[3];
     memset(bind_out, 0, sizeof(bind_out));
-    
+
     bind_out[0].buffer_type = MYSQL_TYPE_STRING; bind_out[0].buffer = db_name; bind_out[0].buffer_length = 50; bind_out[0].length = &len[0];
     bind_out[1].buffer_type = MYSQL_TYPE_STRING; bind_out[1].buffer = db_pass; bind_out[1].buffer_length = 128; bind_out[1].length = &len[1];
     bind_out[2].buffer_type = MYSQL_TYPE_STRING; bind_out[2].buffer = db_salt; bind_out[2].buffer_length = 32; bind_out[2].length = &len[2];
-    
+
     mysql_stmt_bind_result(stmt, bind_out);
 
     if (mysql_stmt_fetch(stmt) != 0) {
@@ -155,7 +155,7 @@ bool mysql_client::mysql_Login(const string& tel, const string& passwd, string& 
     return true;
 }
 
-bool mysql_client::mysql_Show_Ticket(Json::Value &resval)
+bool mysql_client::mysql_Show_Ticket(Json::Value& resval)
 {
     string sql = "select tk_id,addr,max,num ,use_date from ticket_info";
     if (mysql_query(&mysql_con, sql.c_str()) != 0)
@@ -164,7 +164,7 @@ bool mysql_client::mysql_Show_Ticket(Json::Value &resval)
         return false;
     }
 
-    MYSQL_RES *r = mysql_store_result(&mysql_con);
+    MYSQL_RES* r = mysql_store_result(&mysql_con);
     if (r == NULL)
     {
         return false;
@@ -193,6 +193,7 @@ bool mysql_client::mysql_Show_Ticket(Json::Value &resval)
         resval["arr"].append(tmp);
     }
 
+    mysql_free_result(r); // 【修复】释放结果集，防止内存泄漏
     return true;
 }
 
@@ -230,7 +231,7 @@ bool mysql_client::mysql_Subscribe_Ticket(int tk_id, string tel)
     // 加上 FOR UPDATE 开启行级锁
     // 这样当一个事务在查询时，其他事务必须等待，直到当前事务提交
     string s1 = "SELECT max, num FROM ticket_info WHERE tk_id =" + to_string(tk_id) + " FOR UPDATE";
-    
+
     if (mysql_query(&mysql_con, s1.c_str()) != 0)
     {
         cout << "查询失败: " << mysql_error(&mysql_con) << endl;
@@ -238,11 +239,11 @@ bool mysql_client::mysql_Subscribe_Ticket(int tk_id, string tel)
         return false;
     }
 
-    MYSQL_RES *r = mysql_store_result(&mysql_con);
+    MYSQL_RES* r = mysql_store_result(&mysql_con);
     if (r == NULL || mysql_num_rows(r) != 1)
     {
         cout << "获取结果集失败或记录不存在" << endl;
-        if(r) mysql_free_result(r);
+        if (r) mysql_free_result(r);
         mysql_user_rollback();
         return false;
     }
@@ -260,16 +261,13 @@ bool mysql_client::mysql_Subscribe_Ticket(int tk_id, string tel)
     string str_num = row[1]; // 当前已定票数
     int tk_max = atoi(str_max.c_str());
     int tk_num = atoi(str_num.c_str());
-    mysql_free_result(r); 
+    mysql_free_result(r);
     if (tk_max <= tk_num)
     {
         cout << "没有可用的票" << endl;
         mysql_user_rollback();
         return false;
     }
-
-    cout << "已锁定该行，请在10秒内开启另一个客户端尝试预约同一编号..." << endl;
-    sleep(10); // 暂时阻塞10秒，模拟处理过程
 
     tk_num++;
     // update ticket_info set num=3 where tk_id=1;
@@ -307,9 +305,9 @@ bool mysql_client::mysql_Cancel_Reservation(int sub_id)
         return false;
     }
 
-    MYSQL_RES *r = mysql_store_result(&mysql_con);
+    MYSQL_RES* r = mysql_store_result(&mysql_con);
     if (r == NULL || mysql_num_rows(r) == 0) {
-        if(r) mysql_free_result(r);
+        if (r) mysql_free_result(r);
         mysql_user_rollback(); // 记录不存在，取消失败
         return false;
     }
@@ -336,19 +334,19 @@ bool mysql_client::mysql_Cancel_Reservation(int sub_id)
     return true;
 }
 
-bool mysql_client::mysql_user_view_reservation(const string &tel, Json::Value &resval)
+bool mysql_client::mysql_user_view_reservation(const string& tel, Json::Value& resval)
 {
     // 使用 JOIN 关联查询，体现数据库功底
     // s.sub_time 是预约时间，t.addr 是门票地点
     string sql = "SELECT s.id, t.addr, s.sub_time FROM sub_ticket s "
-                 "JOIN ticket_info t ON s.tk_id = t.tk_id "
-                 "WHERE s.tel = '" + tel + "'";
+        "JOIN ticket_info t ON s.tk_id = t.tk_id "
+        "WHERE s.tel = '" + tel + "'";
 
     if (mysql_query(&mysql_con, sql.c_str()) != 0) {
         return false;
     }
 
-    MYSQL_RES *r = mysql_store_result(&mysql_con);
+    MYSQL_RES* r = mysql_store_result(&mysql_con);
     if (r == NULL) return false;
 
     int n = mysql_num_rows(r);
@@ -386,7 +384,7 @@ bool socket_listen::socket_init()
     saddr.sin_port = htons(m_port);
     saddr.sin_addr.s_addr = inet_addr(m_ips.c_str());
 
-    int res = bind(sockfd, (struct sockaddr *)&saddr, sizeof(saddr));
+    int res = bind(sockfd, (struct sockaddr*)&saddr, sizeof(saddr));
     if (-1 == res)
     {
         cout << "bind err" << endl;
@@ -413,16 +411,16 @@ int socket_listen::accept_client()
 
 void socket_con::Send_err()
 {
-    Json::Value res_val;
-    res_val["status"] = "ERR";
-    send(c, res_val.toStyledString().c_str(), strlen(res_val.toStyledString().c_str()), 0);
+    // 【修复】固定字符串，避免两次调用toStyledString()
+    string out = "{\"status\":\"ERR\"}\n";
+    send(c, out.c_str(), out.size(), 0);
 }
 
 void socket_con::Send_ok()
 {
-    Json::Value res_val;
-    res_val["status"] = "OK";
-    send(c, res_val.toStyledString().c_str(), strlen(res_val.toStyledString().c_str()), 0);
+    // 【修复】固定字符串，避免两次调用toStyledString()
+    string out = "{\"status\":\"OK\"}\n";
+    send(c, out.c_str(), out.size(), 0);
 }
 
 void socket_con::User_Register()
@@ -437,13 +435,7 @@ void socket_con::User_Register()
         Send_err();
     }
 
-    mysql_client cli;
-    if (!cli.mysql_ConnectServer())
-    {
-        Send_err();
-        return;
-    }
-
+    // 【改进】直接使用成员变量 cli，不再重复建立连接
     if (!cli.mysql_Register(tel, passwd, username))
     {
         Send_err();
@@ -460,13 +452,7 @@ void socket_con::User_Login()
     string passwd = val["user_passwd"].asString();
     string user_name;
 
-    mysql_client cli;
-    if (!cli.mysql_ConnectServer())
-    {
-        Send_err();
-        return;
-    }
-
+    // 【改进】直接使用成员变量 cli
     if (!cli.mysql_Login(tel, passwd, user_name))
     {
         Send_err();
@@ -483,13 +469,7 @@ void socket_con::User_Login()
 void socket_con::User_Show_Ticket()
 {
     Json::Value resval;
-    mysql_client cli;
-    if (!cli.mysql_ConnectServer())
-    {
-        Send_err();
-        return;
-    }
-
+    // 【改进】直接使用成员变量 cli
     if (!cli.mysql_Show_Ticket(resval))
     {
         Send_err();
@@ -506,14 +486,7 @@ void socket_con::User_Subscribe_Ticket()
     int tk_id = val["index"].asInt();
     string tel = val["tel"].asString();
 
-    mysql_client cli;
-    if (!cli.mysql_ConnectServer())
-    {
-        cout << "connect mysql err" << endl;
-        Send_err();
-        return;
-    }
-
+    // 【改进】直接使用成员变量 cli
     if (!cli.mysql_Subscribe_Ticket(tk_id, tel))
     {
         Send_err();
@@ -527,18 +500,10 @@ void socket_con::User_Subscribe_Ticket()
 void socket_con::User_Show_Sub_Ticket()
 {
     // 1. 获取客户端传来的手机号
-    string tel = val["tel"].asString(); 
-    
-    Json::Value resval;
-    mysql_client cli;
-    
-    // 2. 连接数据库并查询
-    if (!cli.mysql_ConnectServer()) {
-        Send_err();
-        return;
-    }
+    string tel = val["tel"].asString();
 
-    // 3. 调用我们之前写好的 JOIN 查询函数
+    Json::Value resval;
+    // 【改进】直接使用成员变量 cli
     if (!cli.mysql_user_view_reservation(tel, resval)) {
         Send_err();
         return;
@@ -554,12 +519,7 @@ void socket_con::User_Cancel_Sub_Ticket()
     // 客户端发过来的JSON：{"type":6, "sub_id": 5}
     int sub_id = val["sub_id"].asInt();
 
-    mysql_client cli;
-    if (!cli.mysql_ConnectServer()) {
-        Send_err();
-        return;
-    }
-
+    // 【改进】直接使用成员变量 cli
     if (!cli.mysql_Cancel_Reservation(sub_id)) {
         Send_err();
         return;
@@ -571,8 +531,9 @@ void socket_con::User_Cancel_Sub_Ticket()
 
 void socket_con::Recv_data()
 {
-    char buff[256] = {0};
-    int n = recv(c, buff, 255, 0);
+    // 【修复】缓冲区扩大到4096，防止注册等长包被截断
+    char buff[4096] = { 0 };
+    int n = recv(c, buff, 4095, 0);
     if (n <= 0)
     {
         cout << "client close" << endl;
@@ -620,9 +581,9 @@ void socket_con::Recv_data()
 }
 
 // callback
-void SOCK_CON_CALLBACK(int fd, short ev, void *arg)
+void SOCK_CON_CALLBACK(int fd, short ev, void* arg)
 {
-    socket_con *q = (socket_con *)arg;
+    socket_con* q = (socket_con*)arg;
 
     if (ev & EV_READ)
     {
@@ -630,9 +591,9 @@ void SOCK_CON_CALLBACK(int fd, short ev, void *arg)
     }
 }
 
-void SOCK_LIS_CALLBACK(int sockfd, short ev, void *arg)
+void SOCK_LIS_CALLBACK(int sockfd, short ev, void* arg)
 {
-    socket_listen *p = (socket_listen *)arg;
+    socket_listen* p = (socket_listen*)arg;
     if (p == NULL)
     {
         return;
@@ -648,9 +609,9 @@ void SOCK_LIS_CALLBACK(int sockfd, short ev, void *arg)
 
         cout << "accept : c=" << c << endl;
 
-        socket_con *q = new socket_con(c);
+        socket_con* q = new socket_con(c);
 
-        struct event *c_ev = event_new(p->Get_base(), c, EV_READ | EV_PERSIST, SOCK_CON_CALLBACK, q);
+        struct event* c_ev = event_new(p->Get_base(), c, EV_READ | EV_PERSIST, SOCK_CON_CALLBACK, q);
         if (c_ev == NULL)
         {
             close(c);
@@ -675,7 +636,7 @@ int main()
     }
 
     // 创建lievent base
-    struct event_base *base = event_init();
+    struct event_base* base = event_init();
     if (base == NULL)
     {
         cout << "base null" << endl;
@@ -685,7 +646,7 @@ int main()
     // 设置socket_listen中的libevent的base
     sock_ser.Set_base(base);
     // 添加sockfd到libevent
-    struct event *sock_ev = event_new(base, sock_ser.Get_sockfd(), EV_READ | EV_PERSIST, SOCK_LIS_CALLBACK, &sock_ser);
+    struct event* sock_ev = event_new(base, sock_ser.Get_sockfd(), EV_READ | EV_PERSIST, SOCK_LIS_CALLBACK, &sock_ser);
     event_add(sock_ev, NULL);
     // 启动事件循环
     event_base_dispatch(base); // select poll epoll
